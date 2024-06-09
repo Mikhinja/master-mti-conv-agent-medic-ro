@@ -21,9 +21,9 @@ from common_utils import *
 
 base_url = "https://www.sfatulmedicului.ro/comunitate/discutii-teme-medicale"
 
-errors_file = './scrape_errors.txt'
-log_file = f'{logs_root}/scrape_log.txt'
-
+timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+errors_file = f'{logs_root}/scrape_errors_{timestamp}.txt'
+log_file = f'{logs_root}/scrape_log_{timestamp}.txt'
 data_folder = f"{data_root}/raw"
 
 # sanitize URL - because some are not in canonical form
@@ -34,15 +34,22 @@ def sanitize_url(url:str)->str:
 
 # Function to fetch and parse a single page of discussions
 def fetch_page(url:str, retries:int=3):
-    response = requests.get(sanitize_url(url))
-    if response.status_code != 200:
-        if response.status_code >= 500 and retries>0:
+    try:
+        response = requests.get(sanitize_url(url))
+        if response.status_code != 200:
+            if response.status_code >= 500 and retries>0:
+                return fetch_page(url, retries=retries-1)
+            #print(f"ERROR: Could not get page {url}: status code {response.status_code}", file=fp)
+            with open(errors_file, "a+") as fp:
+                print(f"ERROR: Could not get page {url}: status code {response.status_code}", file=fp)
+            return None
+        return BeautifulSoup(response.text, 'html.parser')
+    except Exception:
+        if retries>0:
+            # this hides some server errors
             return fetch_page(url, retries=retries-1)
-        print(f"ERROR: Could not get page {url}: status code {response.status_code}", file=fp)
-        with open(errors_file, "a") as fp:
-            print(f"ERROR: Could not get page {url}: status code {response.status_code}", file=fp)
-        return None
-    return BeautifulSoup(response.text, 'html.parser')
+        else:
+            raise
 
 def get_all_categories(num=-1) -> dict:
   ret = {}
@@ -127,41 +134,56 @@ def get_comments_and_replies(soup, stats:dict=None):
         return comments
 
     # Loop through all comments and replies
-    for comment_div in answers_div.find_all('div', class_='qAnswer clearfix'):
+    comment = {}
+    for div in answers_div.find_all('div', class_=['qAnswer clearfix', 'qAnswerReply clearfix']):
         # Extract the user, time, text, votes, and medic status of the comment
-        user_tag = comment_div.find('div', class_='qAnswerInfo clearfix').find('strong')
-        time_tag = comment_div.find('span', class_='qAnswerInfoTime')
-        text_tag = comment_div.find('p')
-        
-        comment = {
-            'user': user_tag.get_text(strip=True) if user_tag else None,
-            'time': convert_relative_time(time_tag),
-            'text': text_tag.get_text(strip=True) if text_tag else None,
-            'votes': get_votes(comment_div),
-            'is_medic': is_medic(comment_div),
-            'replies': []
-        }
+        user_tag = div.find('div', class_='qAnswerInfo clearfix').find('strong')
+        time_tag = div.find('span', class_='qAnswerInfoTime')
+        text_tag = div.find('p')
 
-        # Extract replies
-        replies_divs = comment_div.findNextSiblings('div', class_='qAnswerReply clearfix')
-        for reply_div in replies_divs:
-            user_tag = reply_div.find('div', class_='qAnswerInfo clearfix').find('strong')
-            time_tag = reply_div.find('span', class_='qAnswerInfoTime')
-            text_tag = reply_div.find('p')
-            
+        is_comment = 'qAnswer' in div.get('class')
+        if is_comment:
+            if comment:
+                comments.append(comment)
+                if stats and stats['max replies'] < len(comment['replies']):
+                    stats['max replies'] = len(comment['replies'])
+            comment = {
+                'user': user_tag.get_text(strip=True) if user_tag else None,
+                'time': convert_relative_time(time_tag),
+                'text': text_tag.get_text(strip=True) if text_tag else None,
+                'votes': get_votes(div),
+                'is_medic': is_medic(div),
+                'replies': []
+            }
+            if comment['is_medic']:
+                stats['medic answers'] += 1
+        else:
             reply = {
                 'user': user_tag.get_text(strip=True) if user_tag else None,
                 'time': convert_relative_time(time_tag),
                 'text': text_tag.get_text(strip=True) if text_tag else None,
-                'votes': get_votes(reply_div),
-                'is_medic': is_medic(reply_div)
+                'votes': get_votes(div),
+                'is_medic': is_medic(div)
             }
-
+            if reply['is_medic']:
+                stats['medic answers'] += 1
+            if not comment or 'replies' not in comment:
+                # looks like there are some comments deleted because there are replies to nothing
+                #   in this case just add an empty comment
+                comment = {
+                    'user': None,
+                    'time': None,
+                    'text': None,
+                    'votes': 0,
+                    'is_medic': False,
+                    'replies': []
+                }
             comment['replies'].append(reply)
         
+    if comment:
+        comments.append(comment)
         if stats and stats['max replies'] < len(comment['replies']):
             stats['max replies'] = len(comment['replies'])
-        comments.append(comment)
     
     return comments
 
@@ -188,9 +210,9 @@ def get_questions_content(questions:dict, stats:dict=None):
             try:
                 result = future.result() # is this still needed?
             except Exception as exc:
-                print(f"ERROR: {title} generated an exception: {exc}")
-                with open(errors_file, "a") as fp:
-                    print(f"ERROR: {title} generated an exception: {exc}", file=fp)
+                #print(f"ERROR [get Q content]: {title} generated an exception: {exc}")
+                with open(errors_file, "a+") as fp:
+                    print(f"ERROR [get Q content]: {title} generated an exception: {exc}", file=fp)
 
 
 def get_page_and_subsequent_pages(first_page_url:str)->list[BeautifulSoup]:
@@ -212,35 +234,18 @@ def get_page_and_subsequent_pages(first_page_url:str)->list[BeautifulSoup]:
                     if page is not None:
                         pages.append(page)
                 except Exception as exc:
-                    print(f"ERROR: {url} generated an exception: {exc}")
-                    with open(errors_file, "a") as fp:
-                        print(f"ERROR: {url} generated an exception: {exc}", file=fp)
+                    #print(f"ERROR [get pages]: {url} generated an exception: {exc}")
+                    with open(errors_file, "a+") as fp:
+                        print(f"ERROR [get pages]: {url} generated an exception: {exc}", file=fp)
 
     return pages
 
-def save_all_as_json(path:str, questions:dict)->int:
-    os.makedirs(path, exist_ok=True)
-    dup_names_num = 0
-    for title in questions:
-        sanitized_title = re.sub('[<>:"/\\\\|?*\t\r\n]',' ',title).replace('  ',' ').strip()
-        filename = f'{path}/{sanitized_title[:50]}.json'
-        if os.path.exists(filename):
-            dup_names_num += 1
-            while os.path.exists(filename):
-                filename = filename.replace('.json', 'a.json')
-        try:
-            with open(filename, "w") as fp:
-                json.dump(questions[title], fp, indent=2)
-        except Exception as exc:
-            print(f"ERROR: could not write file {filename} : {exc}")
-            with open(errors_file, "a") as fp:
-                print(f"ERROR: could not write file {filename} : {exc}", file=fp)
-    return dup_names_num
-
-if clean_data_folder and os.path.exists(data_root):
-    shutil.rmtree(data_root)
+if clean_data_folder and os.path.exists(data_folder):
+    shutil.rmtree(data_folder)
 if os.path.exists(errors_file):
     os.remove(errors_file)
+if os.path.exists(log_file):
+    os.remove(log_file)
 
 all_questions = {}
 dup_name_num = 0
@@ -250,11 +255,14 @@ stats = {
     'max question likes': 0,
     'max comments': 0,
     'max replies': 0,
+    'medic answers': 0,
 }
 
 started_time = datetime.now()
 
 print(f'Started scraping from https://www.sfatulmedicului.ro/comunitate at {started_time.strftime("%Y-%m-%d %H:%M:%S")}')
+with open(log_file, "a+") as fp:
+    print(f'Started scraping from https://www.sfatulmedicului.ro/comunitate at {started_time.strftime("%Y-%m-%d %H:%M:%S")}', file=fp)
 cats = get_all_categories()
 
 cats_done_num = 0
@@ -270,14 +278,15 @@ for cat in cats:
     get_questions_content(cat_questions, stats)
 
     # save incrementally
-    dup_name_num += save_all_as_json(path=f"{data_root}/{cat}", questions=cat_questions)
+    dup_name_num += save_all_as_json(path=f"{data_folder}/{cat}", questions=cat_questions, errors_file=errors_file)
     cat_done_time = datetime.now() - cat_time_start
     overall_time = datetime.now() - started_time
 
     all_questions |= cat_questions
     cats_done_num += 1
-    print(f'Categories {cats_done_num:>4} / {cats_num:>4} | {len(all_questions):>7} total | time {timedelta_str(cat_done_time)} [{timedelta_str(overall_time)}]', end='')
-    with open(log_file, "a") as fp:
+    print(f'Categories {cats_done_num:>4} / {cats_num:>4} [ {(100*cats_done_num/cats_num):>5.1f}% ] | {len(all_questions):>7} total Qs | time {timedelta_str(cat_done_time)} [{timedelta_str(overall_time)}]'
+          , end='\r')
+    with open(log_file, "a+") as fp:
         print(f'{cat:>80} [{len(cat_questions):>4}] | {len(all_questions):>7} total | time {timedelta_str(cat_done_time)} [{timedelta_str(overall_time)}]'
             , file=fp)
 print()
@@ -285,3 +294,7 @@ print()
 print(f'Ended at {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} ( {timedelta_str(datetime.now()-started_time)} )')
 print(f'num questions: {len(all_questions):>7}, total duplicate titles {dup_name_num:>7}')
 print(f'stats: {json.dumps(stats, indent=2)}')
+with open(log_file, "a") as fp:
+    print(f'Ended at {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} ( {timedelta_str(datetime.now()-started_time)} )', file=fp)
+    print(f'num questions: {len(all_questions):>7}, total duplicate titles {dup_name_num:>7}', file=fp)
+    print(f'stats: {json.dumps(stats, indent=2)}', file=fp)
