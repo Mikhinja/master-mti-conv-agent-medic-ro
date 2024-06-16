@@ -25,6 +25,7 @@ timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
 errors_file = f'{logs_root}/scrape_errors_{timestamp}.txt'
 log_file = f'{logs_root}/scrape_log_{timestamp}.txt'
 data_folder = f"{data_root}/raw"
+stats_file = f"{data_folder}/stats.json"
 
 # sanitize URL - because some are not in canonical form
 def sanitize_url(url:str)->str:
@@ -85,12 +86,16 @@ def get_questions_in_page(page:BeautifulSoup, cat:str) -> dict:
    # class of top div: "col-md-12 nopadding"s
    div_questions = page.find('div', class_="col-md-12 nopadding")
    question_divs = div_questions.find_all('div', class_="question")
-   questions = { find_with_attr(question,'a', 'title')[0]['title']:   {
-                    'category': cat,
+   questions = { (q_id:=get_question_id(
+                        (url:=sanitize_url(
+                            (title_tag:=find_with_attr(question,'a', 'title')[0])['href'])))):   {
+                    'id': q_id,
+                    'title': title_tag['title'],
+                    'url': url,
+                    'category': [cat], # must be at least one, but can be more, will be updated on contents
                     'has_doc_answer': has_doc_answer(question),
                     'likes': get_num_likes(question),
                     'comments': get_num_comments(question),
-                    'url': sanitize_url(find_with_attr(question,'a', 'title')[0]['href'])
                 }
                 for question in question_divs
             }
@@ -110,7 +115,7 @@ def convert_relative_time(time_tag)->str:
     relative_time = time_tag.get_text(strip=True)
     current_time = datetime.now()
     relative_time = relative_time.replace(' un ', ' 1 ').replace(' o ', ' 1 ')
-    if "acum" in relative_time:
+    if "acum" in relative_time or 'in urma' in relative_time:
         number = int(re.search(r'\d+', relative_time).group())
         if "ani" in relative_time:
             current_time = current_time - timedelta(days=number*365)
@@ -124,74 +129,87 @@ def convert_relative_time(time_tag)->str:
             current_time = current_time - timedelta(minutes=number)
     return current_time.strftime('%Y-%m-%d')
 
-def get_comments_and_replies(soup, stats:dict=None):
+def get_comments_and_replies(page, stats:dict=None):
     comments = []
     
     # Find the main div that contains the comments and replies
-    answers_div = soup.find('div', id='questionAnswers')
-    
-    if not answers_div:
-        return comments
+    answers_div = page.find('div', id='questionAnswers')
 
-    # Loop through all comments and replies
-    comment = {}
-    for div in answers_div.find_all('div', class_=['qAnswer clearfix', 'qAnswerReply clearfix']):
-        # Extract the user, time, text, votes, and medic status of the comment
-        user_tag = div.find('div', class_='qAnswerInfo clearfix').find('strong')
-        time_tag = div.find('span', class_='qAnswerInfoTime')
-        text_tag = div.find('p')
+    if answers_div:
+        # Loop through all comments and replies
+        comment = {}
+        for div in answers_div.find_all('div', class_=['qAnswer clearfix', 'qAnswerReply clearfix']):
+            # Extract the user, time, text, votes, and medic status of the comment
+            user_tag = div.find('div', class_='qAnswerInfo clearfix').find('strong')
+            time_tag = div.find('span', class_='qAnswerInfoTime')
+            text_tag = div.find('p')
 
-        is_comment = 'qAnswer' in div.get('class')
-        if is_comment:
-            if comment:
-                comments.append(comment)
-                if stats and stats['max replies'] < len(comment['replies']):
-                    stats['max replies'] = len(comment['replies'])
-            comment = {
-                'user': user_tag.get_text(strip=True) if user_tag else None,
-                'time': convert_relative_time(time_tag),
-                'text': text_tag.get_text(strip=True) if text_tag else None,
-                'votes': get_votes(div),
-                'is_medic': is_medic(div),
-                'replies': []
-            }
-            if comment['is_medic']:
-                stats['medic answers'] += 1
-        else:
-            reply = {
-                'user': user_tag.get_text(strip=True) if user_tag else None,
-                'time': convert_relative_time(time_tag),
-                'text': text_tag.get_text(strip=True) if text_tag else None,
-                'votes': get_votes(div),
-                'is_medic': is_medic(div)
-            }
-            if reply['is_medic']:
-                stats['medic answers'] += 1
-            if not comment or 'replies' not in comment:
-                # looks like there are some comments deleted because there are replies to nothing
-                #   in this case just add an empty comment
+            is_comment = 'qAnswer' in div.get('class')
+            if is_comment:
+                if comment:
+                    comments.append(comment)
+                    if stats and stats['max replies'] < len(comment['replies']):
+                        stats['max replies'] = len(comment['replies'])
                 comment = {
-                    'user': None,
-                    'time': None,
-                    'text': None,
-                    'votes': 0,
-                    'is_medic': False,
+                    'user': user_tag.get_text(strip=True) if user_tag else None,
+                    'time': convert_relative_time(time_tag),
+                    'text': text_tag.get_text(strip=True) if text_tag else None,
+                    'votes': get_votes(div),
+                    'is_medic': is_medic(div),
                     'replies': []
                 }
-            comment['replies'].append(reply)
-        
-    if comment:
-        comments.append(comment)
-        if stats and stats['max replies'] < len(comment['replies']):
-            stats['max replies'] = len(comment['replies'])
+                if comment['is_medic']:
+                    stats['medic answers'] += 1
+            else:
+                reply = {
+                    'user': user_tag.get_text(strip=True) if user_tag else None,
+                    'time': convert_relative_time(time_tag),
+                    'text': text_tag.get_text(strip=True) if text_tag else None,
+                    'votes': get_votes(div),
+                    'is_medic': is_medic(div)
+                }
+                if reply['is_medic']:
+                    stats['medic answers'] += 1
+                if not comment or 'replies' not in comment:
+                    # looks like there are some comments deleted because there are replies to nothing
+                    #   in this case just add an empty comment
+                    comment = {
+                        'user': None,
+                        'time': None,
+                        'text': None,
+                        'votes': 0,
+                        'is_medic': False,
+                        'replies': []
+                    }
+                comment['replies'].append(reply)
+            
+        if comment:
+            comments.append(comment)
+            if stats and stats['max replies'] < len(comment['replies']):
+                stats['max replies'] = len(comment['replies'])
     
     return comments
 
-def process_question(questions:dict, title:str, stats:dict=None)->dict:
-    question = questions[title]
+def get_question_id(question_url:str)->str:
+    return re.search(r'/([^/]+)$', question_url).group(1)
+
+def process_question(questions:dict, q_id:str, stats:dict=None)->dict:
+    question = questions[q_id]
     question_page = fetch_page(question['url'])
-    question['title'] = title
     question['question'] = question_page.find('p', class_='').text
+    question['user'] = question_page.find('')
+
+    question_header_page = question_page.find('div', id='questionHeader')
+    question['category'] = [tag.text for tag in question_header_page.find_all('a', class_='toate-grupurile')]
+    
+    question_header_span = question_header_page.find('span')
+    question['user'] = question_header_span.find('a').text
+    question['time'] = convert_relative_time(next(
+        (c for c in question_header_span.children if isinstance(c, str) and 'in urma' in c)))
+
+    # nested comments and replies
+    question['answers'] = get_comments_and_replies(question_page, stats)
+
     if stats:
         if question['likes'] > 0:
             stats['questions liked'] += 1
@@ -199,20 +217,19 @@ def process_question(questions:dict, title:str, stats:dict=None)->dict:
                 stats['max question likes'] = question['likes']
         if stats['max comments'] < question['comments']:
             stats['max comments'] = question['comments']
-    question['answers'] = get_comments_and_replies(question_page, stats)
     return question # is return really needed?
 
 def get_questions_content(questions:dict, stats:dict=None):
    with ThreadPoolExecutor(max_workers=50) as executor:  # You can adjust the number of workers
-        future_to_title = {executor.submit(process_question, questions, title, stats): title for title in questions}
-        for future in as_completed(future_to_title):
-            title = future_to_title[future]
+        future_to_id = {executor.submit(process_question, questions, q_id, stats): q_id for q_id in questions}
+        for future in as_completed(future_to_id):
+            q_id = future_to_id[future]
             try:
                 result = future.result() # is this still needed?
             except Exception as exc:
-                #print(f"ERROR [get Q content]: {title} generated an exception: {exc}")
+                #print(f"ERROR [get Q content]: {q_id} generated an exception: {exc}")
                 with open(errors_file, "a+") as fp:
-                    print(f"ERROR [get Q content]: {title} generated an exception: {exc}", file=fp)
+                    print(f"ERROR [get Q content]: {q_id} generated an exception: {exc}", file=fp)
 
 
 def get_page_and_subsequent_pages(first_page_url:str)->list[BeautifulSoup]:
@@ -239,6 +256,23 @@ def get_page_and_subsequent_pages(first_page_url:str)->list[BeautifulSoup]:
                         print(f"ERROR [get pages]: {url} generated an exception: {exc}", file=fp)
 
     return pages
+
+
+url_to_do = 'https://www.sfatulmedicului.ro/comunitate/sarcina/concurs-care-este-cea-mai-buna-varsta-pentru-a-avea-un-copil_32094'
+
+# if url_to_do:
+#     question_page = fetch_page(url_to_do)
+#     question = {
+#                     'id': get_question_id(url_to_do),
+#                     'title': question_page.find('h1', class_='titlu-pagina').text,
+#                     'url': url_to_do,
+#                     'category': [cat], # must be at least one, but can be more, will be updated on contents
+#                     'has_doc_answer': has_doc_answer(question),
+#                     'likes': get_num_likes(question),
+#                     'comments': get_num_comments(question),
+#                 }
+#     exit()
+
 
 if clean_data_folder and os.path.exists(data_folder):
     shutil.rmtree(data_folder)
@@ -273,16 +307,21 @@ for cat in cats:
     cat_questions = {}
     for cat_page in cat_pages:
         cat_questions |= get_questions_in_page(cat_page, cat)
+
+    # remove secondary occurrences due to multiple categories per question
+    cat_questions = {q_id: cat_questions[q_id] for q_id in cat_questions if q_id not in all_questions}
     
     # call this function for all questions to parallelize better
     get_questions_content(cat_questions, stats)
+    all_questions |= cat_questions
 
     # save incrementally
-    dup_name_num += save_all_as_json(path=f"{data_folder}/{cat}", questions=cat_questions, errors_file=errors_file)
+    dup_name_num += save_all_as_json(path=f"{data_folder}/questions",
+                                     questions=cat_questions,
+                                     errors_file=errors_file)
     cat_done_time = datetime.now() - cat_time_start
     overall_time = datetime.now() - started_time
 
-    all_questions |= cat_questions
     cats_done_num += 1
     print(f'Categories {cats_done_num:>4} / {cats_num:>4} [ {(100*cats_done_num/cats_num):>5.1f}% ] | {len(all_questions):>7} total Qs | time {timedelta_str(cat_done_time)} [{timedelta_str(overall_time)}]'
           , end='\r')
@@ -291,10 +330,29 @@ for cat in cats:
             , file=fp)
 print()
 
+stats['total questions'] = len(all_questions)
+stats['duplicate names'] = dup_name_num # hopefully 0
+stats['categories'] = cats_num
+
+# order stats to be intuitive
+stats = {key: stats[key]
+         for key in [
+             'total questions',
+             'categories',
+             'questions liked',
+             'max question likes',
+             'medic answers',
+             'max comments',
+             'max replies',
+             'duplicate names',
+         ]}
+
 print(f'Ended at {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} ( {timedelta_str(datetime.now()-started_time)} )')
-print(f'num questions: {len(all_questions):>7}, total duplicate titles {dup_name_num:>7}')
 print(f'stats: {json.dumps(stats, indent=2)}')
 with open(log_file, "a") as fp:
     print(f'Ended at {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} ( {timedelta_str(datetime.now()-started_time)} )', file=fp)
-    print(f'num questions: {len(all_questions):>7}, total duplicate titles {dup_name_num:>7}', file=fp)
     print(f'stats: {json.dumps(stats, indent=2)}', file=fp)
+
+# save stats separately too
+with open(stats_file, "w") as fp:
+    json.dump(stats, fp=fp, indent=2)
