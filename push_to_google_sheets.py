@@ -14,22 +14,6 @@ import time
 from control_vars import *
 from common_utils import *
 
-# stat control params
-NUM_QUESTIONS_TO_ANNNOTATE = 50
-NUM_QUESTIONS_PER_SHEET = 10
-
-# google sheets values
-SHEET_ID_COL_WIDTH = 50
-SHEET_TITLE_COL_WIDTH = 90
-SHEET_TEXT_COL_WIDTH = 330
-SHEET_FLAG_IN_COL_WIDTH = 50
-SHEET_COMP_IN_COL_WIDTH = 100
-
-# google drive destination folder id
-DESTINATION_DRIVE_FOLDER_ID = '19OQ2xxGYk5f90yMTfMOh6-EbhWN3Xro4'
-
-# workaround for requests limit per minute for free account
-GOOGLE_API_LIMIT_WORKAROUD_WAIT = 10
 
 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
 errors_file = f'{logs_root}/push_to_sheets_errors_{timestamp}.txt'
@@ -188,7 +172,7 @@ def setup_columns(spreadsheet_id):
         result = service_sheets.spreadsheets().values().update(
             spreadsheetId=spreadsheet_id, range='A1:B1',
             valueInputOption='RAW', body={
-                'values': [["Evaluati raspunsurile, nu intrebarile. Daca raspunsul are si o replica atunci evaluati doar replica.", ""]]
+                'values': [["Evaluati raspunsurile, nu intrebarile.", ""]]
             }).execute()
         
         result = format_columns(spreadsheet_id=spreadsheet_id, start_index=0, end_index=1, width=SHEET_ID_COL_WIDTH, wrap=True)
@@ -406,6 +390,8 @@ def insert_data_rows(spreadsheet_id, data):
     values = []
     for entry in data:
         id_num = get_num_from_question_id(entry['id'])
+        if 'answers_meta' in entry:
+            id_num = f'{id_num}\n{entry.get("answers_meta")}'
         title = entry.get("title", "")
         category = ", ".join(entry.get("category", []))
         question = entry.get("question", "")
@@ -486,7 +472,7 @@ def generate_sheets_by_partitioning(picked_questions):
                 insert_data_rows(spreadsheet_id, picked_questions[start_idx:end_idx])
 
                 # Move the file to the specified folder
-                move_file_to_folder(spreadsheet_id, DESTINATION_DRIVE_FOLDER_ID)
+                move_file_to_folder(spreadsheet_id, DESTINATION_TODO_DRIVE_FOLDER_ID)
 
                 #print(f"Data inserted into Spreadsheet ID: {spreadsheet_id}")
                 with open(log_file, "a+") as fp:
@@ -520,7 +506,10 @@ ids_questions_with_non_doc_answers:list[str] = []
 with open(f'{in_data_folder}/questions_with_non_doc_answers_2a.json', 'r') as fp:
     ids_questions_with_non_doc_answers = json.load(fp)
 
-ids_questions_candidates = (ids_questions_with_liked_doc_answers
+# for manual labeling we want to over represent those that have better changes of being of good quality
+# this is so we can better tune the rating towards good quality
+# the bias will be mitigated by adding a negative bias to rating where there is no labeled data
+ids_questions_candidates = (  ids_questions_with_liked_doc_answers
                             + ids_questions_with_liked_doc_answers
                             + ids_questions_with_liked_doc_answers
                             + ids_questions_with_doc_answers
@@ -556,6 +545,7 @@ for question_id in picked_questions_names:
                 answer['replies'] = []
             answers.append(answer)
       picked_question['answers'] = answers
+      picked_question['answers_meta'] = str(two_answers)
       picked_questions.append(picked_question)
 
 print('Going to do 2 passes to ensure every question gets 2 evaluatinos')

@@ -29,7 +29,7 @@ out_censored_words_file = f'{out_data_folder}/censored_words.json'
 #   word derivations, for example 'populat' means populated and adding '-ie' at the end means population
 salvage_redacted_words = {
     # medications
-    #'kp***ax': 'klabax', # is this right??
+    'kp***ax': 'klabax', # confirmed with a medic
 
     # Romanian words censored by accident
     'amp**a': 'ampula',
