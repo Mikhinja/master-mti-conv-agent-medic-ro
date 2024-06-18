@@ -50,6 +50,15 @@ def get_censored_words(raw_q:dict)->list[str]:
                 ret += censored_test.findall(r['text'])
     return ret
 
+def get_censored_words_q_a(q:dict, a:dict)->list[str]:
+    ret = []
+    if q:
+        ret += censored_test.findall(q['title'])
+        ret += censored_test.findall(q['question'])
+        if a and a['text']:
+            ret += censored_test.findall(a['text'])
+    return ret
+
 re_punctuation = re.compile(r'^[,.()+-_:?!&^%$€\'"/\\]+$')
 re_has_punctuation = re.compile(r'[,.()+-_:?!&^%$€\'"/\\]+')
 def is_punctuation(text:str)->bool:
