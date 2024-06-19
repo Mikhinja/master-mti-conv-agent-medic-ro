@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medical Q&A</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="text-center">Medical Q&A</h1>
+        <form id="qa-form">
+            <div class="form-group">
+                <label for="question">Question:</label>
+                <input type="text" class="form-control" id="question" name="question" required>
+            </div>
+            <div class="form-group">
+                <label for="answer">Answer:</label>
+                <textarea class="form-control" id="answer" name="answer" rows="3" required></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">Submit</button>
+        </form>
+        <h2 class="mt-4">Evaluation</h2>
+        <div id="evaluation" class="alert alert-info" role="alert"></div>
+    </div>
+
+    <script>
+        document.getElementById('qa-form').addEventListener('submit', function(event) {
+            event.preventDefault();
+            const question = document.getElementById('question').value;
+            const answer = document.getElementById('answer').value;
+
+            fetch('http://127.0.0.1:5000/evaluate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ question, answer }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('evaluation').innerText = data.evaluation;
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                document.getElementById('evaluation').innerText = 'An error occurred while evaluating the answer.';
+            });
+        });
+    </script>
+</body>
+</html>
