@@ -149,6 +149,18 @@ embedding_dim = 100
 arc_i_model = build_arc_i_model(vocab_size, embedding_dim, max_seq_length)
 arc_i_model.summary()
 
+model_name = f'{out_data_folder}/arc_i_model_seq{max_seq_length}_embdim{embedding_dim}.h5'
+
+# temp, remove this
+if os.path.exists(model_name):
+    import pickle
+
+    # saving
+    with open(f'{out_data_folder}/tokenizer.pickle', 'wb') as handle:
+        pickle.dump(tokenizer, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    exit(0)
+
 # Train the ARC-I model
 arc_i_model.fit(
     [X_train_question_pad, X_train_answer_pad],
@@ -158,7 +170,6 @@ arc_i_model.fit(
     validation_data=([X_test_question_pad, X_test_answer_pad], y_test)
 )
 
-model_name = f'{out_data_folder}/arc_i_model_seq{max_seq_length}_embdim{embedding_dim}.h5'
 if os.path.exists(model_name):
     os.rename(model_name, model_name.replace('.h5', '_bak.h5'))
 print(f'Saving model to {model_name}')

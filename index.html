@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medical Q&A</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
+    <style>
+        .question-card { cursor: pointer; }
+        .question-card.active { background-color: #e9ecef; }
+        .answer-input { display: none; }
+        .answer-input.active { display: block; }
+        .evaluation { font-size: 0.9em; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="text-center">Medical Q&A</h1>
+        <div id="questions-list" class="list-group mb-4">
+            <!-- Lista de întrebări va fi generată aici -->
+        </div>
+        <div id="answer-section" class="answer-input">
+            <h4 id="selected-question"></h4>
+            <form id="qa-form">
+                <div class="form-group">
+                    <label for="answer">Your Answer:</label>
+                    <textarea class="form-control" id="answer" name="answer" rows="3" required></textarea>
+                </div>
+                <div id="evaluation" class="alert alert-info evaluation" role="alert"></div>
+                <button type="submit" class="btn btn-primary mt-3">Submit</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const questions = [
+            { id: 1, question: "buna ziua ! asa vrea sa va intreb daca dereglarea ciclului menstrual poate fi un simtom al menopauzei ?",
+                answer: "" },
+            { id: 2, question: "am 21 de ani si am tratament cu depakine de 500 si as vrea sa stiu daca am voie sa iau anticonceptionale ?",
+                answer: "" },
+            { id: 3, question: "buna ziua . am defacut injectii cu oxacilina si nu stiu ce cantitate de ser fiziologic se pune pentru dizolvare . e flacon de 500mg va rog trebuie sa incep urgent sa fac dar nu mai am pe cine sa intreb acum si nici sa merg la farmlacie pt ca am bebelusul care e si el mic si nul pot scoate din casa ?",
+                answer: "10 ml intramuscular si 20 ml intravenos." }
+        ];
+
+        function renderQuestions() {
+            const list = document.getElementById('questions-list');
+            list.innerHTML = '';
+            questions.forEach(q => {
+                const item = document.createElement('a');
+                item.className = 'list-group-item list-group-item-action question-card';
+                item.dataset.id = q.id;
+                item.innerText = q.question;
+                if (q.answer) {
+                    const badge = document.createElement('span');
+                    badge.className = 'badge badge-success ml-2';
+                    badge.innerText = 'Answered';
+                    item.appendChild(badge);
+                }
+                item.addEventListener('click', () => selectQuestion(q, item));
+                list.appendChild(item);
+            });
+        }
+
+        function selectQuestion(question, element) {
+            const answerSection = document.getElementById('answer-section');
+            document.getElementById('answer').value = question.answer;
+            document.getElementById('selected-question').innerText = question.question;
+            answerSection.classList.add('active');
+
+            // Mark selected question
+            document.querySelectorAll('.question-card').forEach(item => item.classList.remove('active'));
+            element.classList.add('active');
+
+            evaluateAnswer(question.question, question.answer);
+        }
+
+        document.getElementById('qa-form').addEventListener('submit', function(event) {
+            event.preventDefault();
+            const answer = document.getElementById('answer').value;
+            const selectedQuestionText = document.getElementById('selected-question').innerText;
+            const selectedQuestion = questions.find(q => q.question === selectedQuestionText);
+            selectedQuestion.answer = answer;
+            evaluateAnswer(selectedQuestion.question, answer);
+            renderQuestions();
+        });
+
+        function evaluateAnswer(question, answer) {
+            fetch('http://127.0.0.1:5000/evaluate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ question, answer }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('evaluation').innerText = data.evaluation;
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                document.getElementById('evaluation').innerText = 'An error occurred while evaluating the answer.';
+            });
+        }
+
+        renderQuestions();
+    </script>
+</body>
+</html>
