@@ -1,5 +1,5 @@
 import json
-from typing import Callable
+import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
@@ -7,10 +7,11 @@ print(f'tensorflow version {tf.__version__}')
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.models import Model, load_model
-from tensorflow.keras.layers import Input, Embedding, Conv1D, GlobalMaxPooling1D, Dense, Concatenate
-
+from tensorflow.keras.layers import Input, Embedding, Dense, Lambda, Dot
+from tensorflow.keras.callbacks import ModelCheckpoint
 from control_vars import *
 from common_utils import *
+from ml_utils import AggregationLayer
 
 out_data_folder = f"{data_root}/models"
 os.makedirs(out_data_folder, exist_ok=True)
@@ -95,31 +96,30 @@ def prepare_data(df, max_seq_length):
     return (X_train_question_pad, X_train_answer_pad, X_test_question_pad, X_test_answer_pad, 
             y_train, y_test, tokenizer)
 
-# Define the ARC-I model
-def build_arc_i_model(vocab_size, embedding_dim, input_length):
-    input_question = Input(shape=(input_length,), name='question_input')
-    input_answer = Input(shape=(input_length,), name='answer_input')
+# Define the DRMM model
+def build_drmm_model(vocab_size, embedding_dim, max_seq_length):
+    # Input layers
+    question_input = Input(shape=(max_seq_length,), name='question_input')
+    answer_input = Input(shape=(max_seq_length,), name='answer_input')
     
-    embedding_layer = Embedding(input_dim=vocab_size, output_dim=embedding_dim, input_length=input_length)
+    # Embedding layer
+    embedding_layer = Embedding(input_dim=vocab_size, output_dim=embedding_dim, input_length=max_seq_length, name='embedding')
+    question_embedding = embedding_layer(question_input)
+    answer_embedding = embedding_layer(answer_input)
     
-    question_embedding = embedding_layer(input_question)
-    answer_embedding = embedding_layer(input_answer)
+    # Matching histogram
+    matching = Dot(axes=-1, normalize=True)([question_embedding, answer_embedding])
+    matching_histogram = Dense(30, activation='relu')(matching)
+    matching_histogram = Dense(1, activation='relu')(matching_histogram)
     
-    conv_layer = Conv1D(filters=128, kernel_size=3, activation='relu')
+    # Aggregation
+    aggregation = AggregationLayer()(matching_histogram)
     
-    question_conv = conv_layer(question_embedding)
-    answer_conv = conv_layer(answer_embedding)
+    # Output layer
+    output = Dense(1, activation='sigmoid', name='output')(aggregation)
     
-    question_pool = GlobalMaxPooling1D()(question_conv)
-    answer_pool = GlobalMaxPooling1D()(answer_conv)
-    
-    merged = Concatenate()([question_pool, answer_pool])
-    
-    dense = Dense(64, activation='relu')(merged)
-    output_goodness = Dense(1, activation='sigmoid', name='goodness_output')(dense)
-    
-    model = Model(inputs=[input_question, input_answer], outputs=[output_goodness])
-    
+    # Model
+    model = Model(inputs=[question_input, answer_input], outputs=output)
     model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
     return model
 
@@ -145,38 +145,46 @@ max_seq_length = 500
 vocab_size = len(tokenizer.word_index) + 1
 embedding_dim = 100
 
-# Build and compile the ARC-I model
-arc_i_model = build_arc_i_model(vocab_size, embedding_dim, max_seq_length)
-arc_i_model.summary()
+# Build and compile the DRMM model
+drmm_model = build_drmm_model(vocab_size, embedding_dim, max_seq_length)
+drmm_model.summary()
 
-# Train the ARC-I model
-arc_i_model.fit(
-    [X_train_question_pad, X_train_answer_pad],
-    y_train,
-    epochs=10,
-    batch_size=32,
-    validation_data=([X_test_question_pad, X_test_answer_pad], y_test)
-)
+# Prepare the target data
+y_train = np.expand_dims(y_train, -1)
+y_test = np.expand_dims(y_test, -1)
 
-model_name = f'{out_data_folder}/arc_i_model_seq{max_seq_length}_embdim{embedding_dim}.h5'
-if os.path.exists(model_name):
-    os.rename(model_name, model_name.replace('.h5', '_bak.h5'))
-print(f'Saving model to {model_name}')
-# Save the trained model
-arc_i_model.save(model_name)
+model_name = f'{out_data_folder}/drmm_model{max_seq_length}_embdim{embedding_dim}.keras'
 
-# Load the trained model
-loaded_model = load_model(model_name)
+if not os.path.exists(model_name):
+    # Define a checkpoint callback to save the best model
+    checkpoint = ModelCheckpoint(model_name, save_best_only=True, monitor='val_loss', mode='min', verbose=1)
+
+    # Train the model
+    drmm_model.fit(
+        [X_train_question_pad, X_train_answer_pad],
+        y_train,
+        epochs=10, # 20?
+        batch_size=32, # 64?
+        validation_data=([X_test_question_pad, X_test_answer_pad], y_test),
+        callbacks=[checkpoint]
+    )
+
+#keras.config.enable_unsafe_deserialization()
+
+# Load the best model
+best_model = load_model(model_name)
+print(f'Model saved as {model_name}')
+
 
 # Evaluate the model
-arc_i_predictions = arc_i_model.predict([X_test_question_pad, X_test_answer_pad])
-arc_i_predictions = (arc_i_predictions > 0.5).astype(int)
+drmm_predictions = best_model.predict([X_test_question_pad, X_test_answer_pad])
+drmm_predictions = (drmm_predictions > 0.5).astype(int)
 
 from sklearn.metrics import classification_report
 
-report_classification = classification_report(y_test, arc_i_predictions)
-print("ARC-I Goodness Estimation Task Report:")
+report_classification = classification_report(y_test, drmm_predictions)
+print("DRMM Goodness Estimation Task Report:")
 print(report_classification)
-with open(f'{out_data_folder}/report_arc_i_model_seq{max_seq_length}_embdim{embedding_dim}.txt', 'a+') as fp:
-    print("ARC-I Goodness Estimation Task Report:", file=fp)
+with open(f'{out_data_folder}/report_drmm_model_seq{max_seq_length}_embdim{embedding_dim}.txt', 'a+') as fp:
+    print("DRMM Goodness Estimation Task Report:", file=fp)
     print(report_classification, file=fp)

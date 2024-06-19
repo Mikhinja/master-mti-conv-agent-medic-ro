@@ -12,6 +12,8 @@ from tensorflow.keras.layers import Input, Embedding, Conv1D, GlobalMaxPooling1D
 from control_vars import *
 from common_utils import *
 
+out_data_folder = f"{data_root}/models"
+os.makedirs(out_data_folder, exist_ok=True)
 
 # Load JSON data
 def load_json_data(json_file):
