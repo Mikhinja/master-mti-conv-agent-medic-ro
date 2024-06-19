@@ -15,6 +15,8 @@ from common_utils import *
 out_data_folder = f"{data_root}/models"
 os.makedirs(out_data_folder, exist_ok=True)
 
+max_seq_length = 200
+
 # Load JSON data
 def load_json_data(json_file):
     with open(json_file, 'r') as file:
@@ -24,14 +26,14 @@ def load_json_data(json_file):
 def estimate_goodness(question:dict, answer:dict):
     ret = 0
     if question.get('comments', 0) > 2 or len(answer.get('replies', [])) > 0:
-        ret += 1
+        ret = 1
     # if question.get('likes', 0) > 0:
     #     ret += 1
     if answer.get('votes', 0) > 0:
-        ret = min(2, ret+2)
-    if len(get_censored_words_q_a(question, answer)) > 0:
-        ret = max(0, ret-1)
-    return ret
+        ret = 2 # min(2, ret+2)
+    # if len(get_censored_words_q_a(question, answer)) > 0:
+    #     ret = max(0, ret-1)
+    return ret/2
 
 def estimate_goodness_from_feedback(question:dict, answer:dict):
     if 'feedback' not in answer:
@@ -44,7 +46,7 @@ def estimate_goodness_from_feedback(question:dict, answer:dict):
             ret = 2
         elif ff.get('ranking') == 'Raspunde partial':
             ret = 1
-    return ret
+    return ret/2
 
 # Parse JSON data into pandas DataFrame
 def parse_json_to_df(data):
@@ -58,6 +60,8 @@ def parse_json_to_df(data):
             }
             if row['answer'] is None:
                 # this is the werid case where a direct answer was deleted, but we still have a reply to it
+                continue
+            if (len(row['answer']) > max_seq_length or len(row['question']) > max_seq_length) and row['goodness'] < 2:
                 continue
             rows.append(row)
     df = pd.DataFrame(rows)
@@ -120,7 +124,7 @@ def build_arc_i_model(vocab_size, embedding_dim, input_length):
     
     model = Model(inputs=[input_question, input_answer], outputs=[output_goodness])
     
-    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
     return model
 
 labeled_data_file = f'{data_root}/annotation/questions/_questions_annotated.json'
@@ -137,7 +141,6 @@ data = {p[0]:p[1] if not p[0] in labeled_data_file else labeled_data_file[p[0]]
 df = parse_json_to_df(data)
 
 # Prepare data for training and evaluation
-max_seq_length = 500
 (X_train_question_pad, X_train_answer_pad, X_test_question_pad, X_test_answer_pad, 
  y_train, y_test, tokenizer) = prepare_data(df, max_seq_length)
 
@@ -153,13 +156,12 @@ model_name = f'{out_data_folder}/arc_i_model_seq{max_seq_length}_embdim{embeddin
 
 # temp, remove this
 if os.path.exists(model_name):
-    import pickle
-
-    # saving
-    with open(f'{out_data_folder}/tokenizer.pickle', 'wb') as handle:
-        pickle.dump(tokenizer, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
     exit(0)
+
+# saving
+import pickle
+with open(f'{out_data_folder}/tokenizer_seq{max_seq_length}_embdim{embedding_dim}.pickle', 'wb') as handle:
+    pickle.dump(tokenizer, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 # Train the ARC-I model
 arc_i_model.fit(
