@@ -7,14 +7,29 @@ print(f'tensorflow version {tf.__version__}')
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.models import Model, load_model
-from tensorflow.keras.layers import Input, Embedding, Dense, Lambda, Dot
-from tensorflow.keras.callbacks import ModelCheckpoint
+from tensorflow.keras.layers import Input, Embedding, Dense, Dot, Layer, Dropout
+from tensorflow.keras.callbacks import ModelCheckpoint, ReduceLROnPlateau
+from tensorflow.keras.utils import to_categorical
+
 from control_vars import *
 from common_utils import *
 from ml_utils import AggregationLayer
 
 out_data_folder = f"{data_root}/models"
 os.makedirs(out_data_folder, exist_ok=True)
+max_seq_length = 200
+
+# Custom aggregation layer
+class AggregationLayer(Layer):
+    def __init__(self, **kwargs):
+        super(AggregationLayer, self).__init__(**kwargs)
+
+    def call(self, inputs):
+        return tf.reduce_sum(inputs, axis=1)
+
+    def get_config(self):
+        config = super(AggregationLayer, self).get_config()
+        return config
 
 # Load JSON data
 def load_json_data(json_file):
@@ -22,16 +37,41 @@ def load_json_data(json_file):
         data = json.load(file)
     return data
 
+# Estimate goodness based on question and answer properties
+
+out_data_folder = f"{data_root}/models"
+os.makedirs(out_data_folder, exist_ok=True)
+max_seq_length = 200
+
+# Custom aggregation layer
+class AggregationLayer(Layer):
+    def __init__(self, **kwargs):
+        super(AggregationLayer, self).__init__(**kwargs)
+
+    def call(self, inputs):
+        return tf.reduce_sum(inputs, axis=1)
+
+    def get_config(self):
+        config = super(AggregationLayer, self).get_config()
+        return config
+
+# Load JSON data
+def load_json_data(json_file):
+    with open(json_file, 'r') as file:
+        data = json.load(file)
+    return data
+
+# Estimate goodness based on question and answer properties
 def estimate_goodness(question:dict, answer:dict):
     ret = 0
     if question.get('comments', 0) > 2 or len(answer.get('replies', [])) > 0:
-        ret += 1
+        ret = 1
     # if question.get('likes', 0) > 0:
     #     ret += 1
     if answer.get('votes', 0) > 0:
-        ret = min(2, ret+2)
-    if len(get_censored_words_q_a(question, answer)) > 0:
-        ret = max(0, ret-1)
+        ret = 2 # min(2, ret+2)
+    # if len(get_censored_words_q_a(question, answer)) > 0:
+    #     ret = max(0, ret-1)
     return ret
 
 def estimate_goodness_from_feedback(question:dict, answer:dict):
@@ -60,18 +100,19 @@ def parse_json_to_df(data):
             if row['answer'] is None:
                 # this is the werid case where a direct answer was deleted, but we still have a reply to it
                 continue
+            if (len(row['answer']) > max_seq_length or len(row['question']) > max_seq_length) and row['goodness'] < 2:
+                continue
             rows.append(row)
     df = pd.DataFrame(rows)
     return df
 
 # Preprocess the text data
 def preprocess_text(text):
-    # Basic preprocessing steps like lowercasing, removing punctuation, etc.
     text = text.lower()
     return text
 
 # Prepare the data for TensorFlow
-def prepare_data(df, max_seq_length):
+def prepare_data(df):
     df['question'] = df['question'].apply(preprocess_text)
     df['answer'] = df['answer'].apply(preprocess_text)
     
@@ -97,32 +138,29 @@ def prepare_data(df, max_seq_length):
             y_train, y_test, tokenizer)
 
 # Define the DRMM model
-def build_drmm_model(vocab_size, embedding_dim, max_seq_length):
-    # Input layers
+def build_drmm_model(vocab_size, embedding_dim, max_seq_length, num_classes):
     question_input = Input(shape=(max_seq_length,), name='question_input')
     answer_input = Input(shape=(max_seq_length,), name='answer_input')
     
-    # Embedding layer
     embedding_layer = Embedding(input_dim=vocab_size, output_dim=embedding_dim, input_length=max_seq_length, name='embedding')
     question_embedding = embedding_layer(question_input)
     answer_embedding = embedding_layer(answer_input)
     
-    # Matching histogram
     matching = Dot(axes=-1, normalize=True)([question_embedding, answer_embedding])
     matching_histogram = Dense(30, activation='relu')(matching)
-    matching_histogram = Dense(1, activation='relu')(matching_histogram)
+    dropout_1 = Dropout(0.5)(matching_histogram)
+    matching_histogram = Dense(1, activation='relu')(dropout_1)
     
-    # Aggregation
     aggregation = AggregationLayer()(matching_histogram)
     
-    # Output layer
-    output = Dense(1, activation='sigmoid', name='output')(aggregation)
+    dropout_2 = Dropout(0.5)(aggregation)
+    output = Dense(num_classes, activation='softmax', name='output')(dropout_2)
     
-    # Model
     model = Model(inputs=[question_input, answer_input], outputs=output)
-    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
     return model
 
+# Load and parse data
 labeled_data_file = f'{data_root}/annotation/questions/_questions_annotated.json'
 unlabeled_data_file = f'{data_root}/annotation/questions/_questions_with_answers.json'
 
@@ -137,48 +175,48 @@ data = {p[0]:p[1] if not p[0] in labeled_data_file else labeled_data_file[p[0]]
 df = parse_json_to_df(data)
 
 # Prepare data for training and evaluation
-max_seq_length = 500
 (X_train_question_pad, X_train_answer_pad, X_test_question_pad, X_test_answer_pad, 
- y_train, y_test, tokenizer) = prepare_data(df, max_seq_length)
+ y_train, y_test, tokenizer) = prepare_data(df)
 
 # Parameters
 vocab_size = len(tokenizer.word_index) + 1
 embedding_dim = 100
+num_classes = 3  # Number of classes in the target variable
 
 # Build and compile the DRMM model
-drmm_model = build_drmm_model(vocab_size, embedding_dim, max_seq_length)
+drmm_model = build_drmm_model(vocab_size, embedding_dim, max_seq_length, num_classes)
 drmm_model.summary()
-
-# Prepare the target data
-y_train = np.expand_dims(y_train, -1)
-y_test = np.expand_dims(y_test, -1)
 
 model_name = f'{out_data_folder}/drmm_model{max_seq_length}_embdim{embedding_dim}.keras'
 
 if not os.path.exists(model_name):
+
     # Define a checkpoint callback to save the best model
     checkpoint = ModelCheckpoint(model_name, save_best_only=True, monitor='val_loss', mode='min', verbose=1)
+    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr=0.001)
+
+    # Class weights to handle class imbalance
+    class_weights = {0: 1., 1: 1., 2: 1.}
 
     # Train the model
     drmm_model.fit(
         [X_train_question_pad, X_train_answer_pad],
         y_train,
-        epochs=10, # 20?
-        batch_size=32, # 64?
+        epochs=10,
+        batch_size=32,
         validation_data=([X_test_question_pad, X_test_answer_pad], y_test),
-        callbacks=[checkpoint]
+        class_weight=class_weights,
+        callbacks=[checkpoint, reduce_lr]
     )
 
-#keras.config.enable_unsafe_deserialization()
-
 # Load the best model
-best_model = load_model(model_name)
+best_model = load_model(model_name, custom_objects={'AggregationLayer': AggregationLayer})
 print(f'Model saved as {model_name}')
 
 
 # Evaluate the model
 drmm_predictions = best_model.predict([X_test_question_pad, X_test_answer_pad])
-drmm_predictions = (drmm_predictions > 0.5).astype(int)
+drmm_predictions = np.argmax(drmm_predictions, axis=1)
 
 from sklearn.metrics import classification_report
 
