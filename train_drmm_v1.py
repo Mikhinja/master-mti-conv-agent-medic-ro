@@ -9,10 +9,35 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import Input, Embedding, Dense, Dot, Layer, Dropout
 from tensorflow.keras.callbacks import ModelCheckpoint, ReduceLROnPlateau
+from tensorflow.keras.utils import to_categorical
 
 from control_vars import *
 from common_utils import *
 from ml_utils import AggregationLayer
+
+out_data_folder = f"{data_root}/models"
+os.makedirs(out_data_folder, exist_ok=True)
+max_seq_length = 200
+
+# Custom aggregation layer
+class AggregationLayer(Layer):
+    def __init__(self, **kwargs):
+        super(AggregationLayer, self).__init__(**kwargs)
+
+    def call(self, inputs):
+        return tf.reduce_sum(inputs, axis=1)
+
+    def get_config(self):
+        config = super(AggregationLayer, self).get_config()
+        return config
+
+# Load JSON data
+def load_json_data(json_file):
+    with open(json_file, 'r') as file:
+        data = json.load(file)
+    return data
+
+# Estimate goodness based on question and answer properties
 
 out_data_folder = f"{data_root}/models"
 os.makedirs(out_data_folder, exist_ok=True)
@@ -87,7 +112,7 @@ def preprocess_text(text):
     return text
 
 # Prepare the data for TensorFlow
-def prepare_data(df, max_seq_length):
+def prepare_data(df):
     df['question'] = df['question'].apply(preprocess_text)
     df['answer'] = df['answer'].apply(preprocess_text)
     
@@ -113,7 +138,7 @@ def prepare_data(df, max_seq_length):
             y_train, y_test, tokenizer)
 
 # Define the DRMM model
-def build_drmm_model(vocab_size, embedding_dim, max_seq_length):
+def build_drmm_model(vocab_size, embedding_dim, max_seq_length, num_classes):
     question_input = Input(shape=(max_seq_length,), name='question_input')
     answer_input = Input(shape=(max_seq_length,), name='answer_input')
     
@@ -129,12 +154,13 @@ def build_drmm_model(vocab_size, embedding_dim, max_seq_length):
     aggregation = AggregationLayer()(matching_histogram)
     
     dropout_2 = Dropout(0.5)(aggregation)
-    output = Dense(1, activation='sigmoid', name='output')(dropout_2)
+    output = Dense(num_classes, activation='softmax', name='output')(dropout_2)
     
     model = Model(inputs=[question_input, answer_input], outputs=output)
-    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
     return model
 
+# Load and parse data
 labeled_data_file = f'{data_root}/annotation/questions/_questions_annotated.json'
 unlabeled_data_file = f'{data_root}/annotation/questions/_questions_with_answers.json'
 
@@ -150,24 +176,22 @@ df = parse_json_to_df(data)
 
 # Prepare data for training and evaluation
 (X_train_question_pad, X_train_answer_pad, X_test_question_pad, X_test_answer_pad, 
- y_train, y_test, tokenizer) = prepare_data(df, max_seq_length)
+ y_train, y_test, tokenizer) = prepare_data(df)
 
 # Parameters
 vocab_size = len(tokenizer.word_index) + 1
 embedding_dim = 100
+num_classes = 3  # Number of classes in the target variable
 
 # Build and compile the DRMM model
-drmm_model = build_drmm_model(vocab_size, embedding_dim, max_seq_length)
+drmm_model = build_drmm_model(vocab_size, embedding_dim, max_seq_length, num_classes)
 drmm_model.summary()
-
-# Prepare the target data
-y_train = np.expand_dims(y_train, -1)
-y_test = np.expand_dims(y_test, -1)
 
 model_name = f'{out_data_folder}/drmm_model{max_seq_length}_embdim{embedding_dim}.keras'
 
 if not os.path.exists(model_name):
-# Define a checkpoint callback to save the best model
+
+    # Define a checkpoint callback to save the best model
     checkpoint = ModelCheckpoint(model_name, save_best_only=True, monitor='val_loss', mode='min', verbose=1)
     reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr=0.001)
 
@@ -192,7 +216,7 @@ print(f'Model saved as {model_name}')
 
 # Evaluate the model
 drmm_predictions = best_model.predict([X_test_question_pad, X_test_answer_pad])
-drmm_predictions = (drmm_predictions > 0.5).astype(int)
+drmm_predictions = np.argmax(drmm_predictions, axis=1)
 
 from sklearn.metrics import classification_report
 
@@ -202,4 +226,3 @@ print(report_classification)
 with open(f'{out_data_folder}/report_drmm_model_seq{max_seq_length}_embdim{embedding_dim}.txt', 'a+') as fp:
     print("DRMM Goodness Estimation Task Report:", file=fp)
     print(report_classification, file=fp)
-
