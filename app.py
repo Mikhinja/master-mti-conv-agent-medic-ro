@@ -18,9 +18,9 @@ with open(f'{out_data_folder}/tokenizer.pickle', 'rb') as handle:
     tokenizer = pickle.load(handle)
 
 
-max_seq_length = 500
+max_seq_length = 200
 embedding_dim = 100
-model_name = f'{out_data_folder}/arc_i_model_seq{max_seq_length}_embdim{embedding_dim}.h5'
+model_name = f'{out_data_folder}/arc_i_model_seq{max_seq_length}_embdim{embedding_dim}.keras'
 
 # Incarca modelul ARC-I salvat
 model = tf.keras.models.load_model(model_name)
