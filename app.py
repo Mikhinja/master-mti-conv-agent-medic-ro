@@ -1,10 +1,12 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import tensorflow as tf
 import numpy as np
 from control_vars import *
 from common_utils import *
 
 app = Flask(__name__)
+CORS(app)
 
 out_data_folder = f"{data_root}/models"
 
@@ -16,7 +18,6 @@ with open(f'{out_data_folder}/tokenizer.pickle', 'rb') as handle:
     tokenizer = pickle.load(handle)
 
 
-max_len = 100  # mai este asta utila sau ar trebui max_seq_length?
 max_seq_length = 500
 embedding_dim = 100
 model_name = f'{out_data_folder}/arc_i_model_seq{max_seq_length}_embdim{embedding_dim}.h5'
@@ -38,8 +39,8 @@ def evaluate():
     question = data.get('question')
     answer = data.get('answer')
     
-    question_seq = preprocess_text(question, tokenizer, max_len)
-    answer_seq = preprocess_text(answer, tokenizer, max_len)
+    question_seq = preprocess_text(question, tokenizer, max_seq_length)
+    answer_seq = preprocess_text(answer, tokenizer, max_seq_length)
     
     prediction = model.predict([question_seq, answer_seq])
     score = prediction[0][0]
