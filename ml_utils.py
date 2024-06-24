@@ -1,6 +1,8 @@
 from typing import Callable
 from tensorflow.keras.layers import Layer
 import tensorflow as tf
+import torch
+from torch.utils.data import Dataset
 
 from control_vars import *
 from common_utils import *
@@ -17,6 +19,22 @@ class AggregationLayer(Layer):
     def get_config(self):
         config = super(AggregationLayer, self).get_config()
         return config
+
+# TODO: revise this
+class MedicalQADataset(Dataset):
+    def __init__(self, data):
+        self.data = data
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        input_ids, attention_mask = self.data[idx]
+        return {
+            'input_ids': torch.tensor(input_ids),
+            'attention_mask': torch.tensor(attention_mask),
+            'labels': torch.tensor(input_ids)
+        }
 
 # Load JSON data
 def load_json_data(json_file):
