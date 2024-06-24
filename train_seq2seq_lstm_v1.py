@@ -55,11 +55,12 @@ filtered_data = filter_good_answers(data)
 
 # Prepare data for training
 questions, answers = zip(*filtered_data)
-questions = list(questions)
+questions = ['<start> ' + question + ' <end>' for question in questions]
 answers = ['<start> ' + answer + ' <end>' for answer in answers]
 
 # Tokenize and pad sequences
 tokenizer = Tokenizer()
+tokenizer.filters = tokenizer.filters.replace('<','').replace('>','') # remove the required for start and end tokens
 tokenizer.fit_on_texts(questions + answers)
 
 question_sequences = tokenizer.texts_to_sequences(questions)
@@ -118,7 +119,7 @@ if not os.path.exists(model_name):
     seq2seq_model.fit(
         [X_train, X_train],
         y_train,
-        epochs=10,
+        epochs=5,
         batch_size=32,
         validation_data=([X_test, X_test], y_test),
         callbacks=[checkpoint]

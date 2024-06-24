@@ -22,3 +22,8 @@ Install python libraries
 `pip install keras`
 `pip install scikit-learn`
 `pip install unidecode`
+
+For GPT-4
+`pip install transformers datasets`
+`pip install torch`
+`pip install transformers[torch]`
