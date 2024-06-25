@@ -11,7 +11,30 @@
         .answer-input { display: none; }
         .answer-input.active { display: block; }
         .evaluation { font-size: 0.9em; margin-top: 10px; }
+        .answer-list { margin-top: 20px; }
+        .answer-item { margin-bottom: 10px; }
+        .stars-outer {
+            display: inline-block;
+            position: relative;
+            font-family: FontAwesome;
+        }
+        .stars-outer::before {
+            content: "\f006 \f006 \f006 \f006 \f006";
+            color: #ccc;
+        }
+        .stars-inner {
+            position: absolute;
+            top: 0;
+            left: 0;
+            white-space: nowrap;
+            overflow: hidden;
+        }
+        .stars-inner::before {
+            content: "\f005 \f005 \f005 \f005 \f005";
+            color: #f8ce0b;
+        }
     </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
 </head>
 <body>
     <div class="container mt-5">
@@ -29,32 +52,22 @@
                 <div id="evaluation" class="alert alert-info evaluation" role="alert"></div>
                 <button type="submit" class="btn btn-primary mt-3">Submit</button>
             </form>
+            <div id="answer-list" class="answer-list"></div>
         </div>
     </div>
 
     <script>
-        const questions = [
-            { id: 1, question: "buna ziua ! asa vrea sa va intreb daca dereglarea ciclului menstrual poate fi un simtom al menopauzei ?",
-                answer: "" },
-            { id: 2, question: "am 21 de ani si am tratament cu depakine de 500 si as vrea sa stiu daca am voie sa iau anticonceptionale ?",
-                answer: "" },
-            { id: 3, question: "buna ziua . am defacut injectii cu oxacilina si nu stiu ce cantitate de ser fiziologic se pune pentru dizolvare . e flacon de 500mg va rog trebuie sa incep urgent sa fac dar nu mai am pe cine sa intreb acum si nici sa merg la farmlacie pt ca am bebelusul care e si el mic si nul pot scoate din casa ?",
-                // answer: ""
-                answer: "10 ml intramuscular si 20 ml intravenos."
-             },
-                { id: 4, question: "imi doresc enorm sa dau cateva kg jos .",
-                answer: "" },
-                { id: 5, question: "spuneti-mi si mie cum pot sa scap de e coli . multumesc",
-                // answer: ""
-                answer: "cu cel mai eficient antibiotic , in urma antibiogramei . tratamentul se face cam in 2-3 reprize , cu antibiotice diferite , pana la sterilizarea urinei ."
-            },
-                
-                { id: 6, question: "buna ziua . am un baietel de 9 ani si acum 2-3 luni am observat ca i-au aparut niste rapurei pe solduri , apoi s-au extins in zona buricului iar acum are si in jurul ochilor si al gurii . am crezut la inceput ca este din cauza caldurii dar se pare ca nu . nu il deranjeaza , nu are mancarimi , nu este pilea rosie si nici uscata . ce poate fi ?",
-                answer: "aceasta eruptie cutanata trebue vazuta de catre un medic dermatolog . poate fi o alergodermie . pana atunci faceti si un examen coproparazitologic ." },
-                { id: 7, question: "un copil de 11 ani , cu simtome: greata , voma , lipsa poftei de mancare , dureri abdominale , ameteli si vsh 20 poate fi suspect de apendicita ?",
-                answer: "" },
+        let questions = [];
+        let timer;
 
-        ];
+        function fetchQuestions() {
+            fetch('http://127.0.0.1:5000/questions')
+                .then(response => response.json())
+                .then(data => {
+                    questions = data;
+                    renderQuestions();
+                });
+        }
 
         function renderQuestions() {
             const list = document.getElementById('questions-list');
@@ -62,9 +75,9 @@
             questions.forEach(q => {
                 const item = document.createElement('a');
                 item.className = 'list-group-item list-group-item-action question-card';
-                item.dataset.id = q.id;
+                item.dataset.id = q.question;
                 item.innerText = q.question;
-                if (q.answer) {
+                if (q.answers.length > 0) {
                     const badge = document.createElement('span');
                     badge.className = 'badge badge-success ml-2';
                     badge.innerText = 'Answered';
@@ -77,7 +90,7 @@
 
         function selectQuestion(question, element) {
             const answerSection = document.getElementById('answer-section');
-            document.getElementById('answer').value = question.answer;
+            document.getElementById('answer').value = '';
             document.getElementById('selected-question').innerText = question.question;
             answerSection.classList.add('active');
 
@@ -85,17 +98,43 @@
             document.querySelectorAll('.question-card').forEach(item => item.classList.remove('active'));
             element.classList.add('active');
 
-            evaluateAnswer(question.question, question.answer);
+            renderAnswers(question.answers);
         }
+
+        function renderAnswers(answers) {
+            const answerList = document.getElementById('answer-list');
+            answerList.innerHTML = '';
+            answers.forEach(a => {
+                const answerItem = document.createElement('div');
+                answerItem.className = 'answer-item';
+                answerItem.innerHTML = `<strong>Answer:</strong> ${a.answer} <br><strong>Score:</strong> ${a.score} ${renderStars(a.score)}`;
+                answerList.appendChild(answerItem);
+            });
+        }
+
+        function renderStars(score) {
+            const starPercentage = (score / 1) * 100;
+            const starPercentageRounded = `${Math.round(starPercentage / 20) * 20}%`;
+            return `<div class="stars-outer"><div class="stars-inner" style="width:${starPercentageRounded}"></div></div>`;
+        }
+
+        document.getElementById('answer').addEventListener('input', function() {
+            clearTimeout(timer);
+            timer = setTimeout(() => {
+                const answer = document.getElementById('answer').value;
+                const selectedQuestionText = document.getElementById('selected-question').innerText;
+                evaluateAnswer(selectedQuestionText, answer);
+            }, 1000);
+        });
 
         document.getElementById('qa-form').addEventListener('submit', function(event) {
             event.preventDefault();
             const answer = document.getElementById('answer').value;
             const selectedQuestionText = document.getElementById('selected-question').innerText;
             const selectedQuestion = questions.find(q => q.question === selectedQuestionText);
-            selectedQuestion.answer = answer;
+            selectedQuestion.answers.push({ answer: answer, score: 0 }); // Score will be updated by evaluateAnswer
             evaluateAnswer(selectedQuestion.question, answer);
-            renderQuestions();
+            fetchQuestions();
         });
 
         function evaluateAnswer(question, answer) {
@@ -109,6 +148,12 @@
             .then(response => response.json())
             .then(data => {
                 document.getElementById('evaluation').innerText = data.evaluation;
+                const selectedQuestion = questions.find(q => q.question === question);
+                const answerIndex = selectedQuestion.answers.findIndex(a => a.answer === answer);
+                if (answerIndex > -1) {
+                    selectedQuestion.answers[answerIndex].score = parseFloat(data.evaluation.split(':')[1]);
+                }
+                renderAnswers(selectedQuestion.answers);
             })
             .catch(error => {
                 console.error('Error:', error);
@@ -116,7 +161,8 @@
             });
         }
 
-        renderQuestions();
+        fetchQuestions();
     </script>
 </body>
+<a href="https://www.flaticon.com/free-icons/star" title="star icons">Star icons created by Pixel perfect - Flaticon</a>
 </html>

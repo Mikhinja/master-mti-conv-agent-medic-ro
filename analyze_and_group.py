@@ -11,6 +11,8 @@ import requests
 # LanguageTool API base URL
 API_URL = "https://languagetool.org/api/v2/check"
 
+# for manual testing use 
+
 # Function to check spelling using LanguageTool
 def check_spelling(text, language="ro", enabledCategories='TYPOS', disabledCategories='CASING,MISC,TYPOGRAPHY'):
   # Prepare request data
