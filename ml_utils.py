@@ -45,7 +45,8 @@ def load_json_data(json_file):
 
 def estimate_goodness(question:dict, answer:dict):
     ret = 0
-    if question.get('comments', 0) > 2 or len(answer.get('replies', [])) > 0:
+    if question.get('comments', 0) > 2 or answer['is_medic'] or (len(answer.get('replies', [])) > 0
+            and '?' not in answer.get('text','') and question['words censored'] == 0):
         ret = 1
     # if question.get('likes', 0) > 0:
     #     ret += 1
