@@ -43,7 +43,6 @@ def load_data():
     if os.path.exists(webappdata_file):
         with open(webappdata_file, 'r') as f:
             return json.load(f)
-    # some default questions
     return []
 
 def save_data(data):
@@ -80,11 +79,20 @@ def evaluate():
     data = request.get_json()
     question = data.get('question')
     answer = data.get('answer')
-
+    
     score = eval_one_q(question, answer)
     
-    evaluation = f'Score: {score:>5.2f}'
+    evaluation = f'Score: {score:.2f}'
+    
+    return jsonify({'evaluation': evaluation, 'score': score})
 
+@app.route('/submit', methods=['POST'])
+def submit():
+    data = request.get_json()
+    question = data.get('question')
+    answer = data.get('answer')
+    score = data.get('score')
+    
     questions = load_data()
     for q in questions:
         if q['question'] == question:
@@ -95,7 +103,7 @@ def evaluate():
 
     save_data(questions)
     
-    return jsonify({'evaluation': evaluation})
+    return jsonify({'status': 'success'})
 
 if __name__ == '__main__':
     app.run(debug=True)

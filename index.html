@@ -16,25 +16,21 @@
         .stars-outer {
             display: inline-block;
             position: relative;
-            font-family: FontAwesome;
-        }
-        .stars-outer::before {
-            content: "\f006 \f006 \f006 \f006 \f006";
-            color: #ccc;
+            width: 100px; /* 5 stars * 20px width per star */
+            height: 20px;
+            background: url('img/star_empty.png') repeat-x;
+            background-size: 20px 20px;
         }
         .stars-inner {
             position: absolute;
             top: 0;
             left: 0;
-            white-space: nowrap;
-            overflow: hidden;
-        }
-        .stars-inner::before {
-            content: "\f005 \f005 \f005 \f005 \f005";
-            color: #f8ce0b;
+            height: 100%;
+            background: url('img/star_full.png') repeat-x;
+            background-size: 20px 20px;
+            width: 0;
         }
     </style>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
 </head>
 <body>
     <div class="container mt-5">
@@ -59,13 +55,16 @@
     <script>
         let questions = [];
         let timer;
+        let currentQuestion = null;
+        let currentScore = 0;
 
-        function fetchQuestions() {
+        function fetchQuestions(callback) {
             fetch('http://127.0.0.1:5000/questions')
                 .then(response => response.json())
                 .then(data => {
                     questions = data;
                     renderQuestions();
+                    if (callback) callback();
                 });
         }
 
@@ -89,6 +88,7 @@
         }
 
         function selectQuestion(question, element) {
+            currentQuestion = question;
             const answerSection = document.getElementById('answer-section');
             document.getElementById('answer').value = '';
             document.getElementById('selected-question').innerText = question.question;
@@ -107,7 +107,7 @@
             answers.forEach(a => {
                 const answerItem = document.createElement('div');
                 answerItem.className = 'answer-item';
-                answerItem.innerHTML = `<strong>Answer:</strong> ${a.answer} <br><strong>Score:</strong> ${a.score} ${renderStars(a.score)}`;
+                answerItem.innerHTML = `<strong>Answer:</strong> ${a.answer} <br><strong>Score:</strong> ${a.score.toFixed(4)} ${renderStars(a.score)}`;
                 answerList.appendChild(answerItem);
             });
         }
@@ -115,26 +115,24 @@
         function renderStars(score) {
             const starPercentage = (score / 1) * 100;
             const starPercentageRounded = `${Math.round(starPercentage / 20) * 20}%`;
-            return `<div class="stars-outer"><div class="stars-inner" style="width:${starPercentageRounded}"></div></div>`;
+            return `
+                <div class="stars-outer">
+                    <div class="stars-inner" style="width:${starPercentageRounded}"></div>
+                </div>`;
         }
 
         document.getElementById('answer').addEventListener('input', function() {
             clearTimeout(timer);
             timer = setTimeout(() => {
                 const answer = document.getElementById('answer').value;
-                const selectedQuestionText = document.getElementById('selected-question').innerText;
-                evaluateAnswer(selectedQuestionText, answer);
+                evaluateAnswer(currentQuestion.question, answer);
             }, 1000);
         });
 
         document.getElementById('qa-form').addEventListener('submit', function(event) {
             event.preventDefault();
             const answer = document.getElementById('answer').value;
-            const selectedQuestionText = document.getElementById('selected-question').innerText;
-            const selectedQuestion = questions.find(q => q.question === selectedQuestionText);
-            selectedQuestion.answers.push({ answer: answer, score: 0 }); // Score will be updated by evaluateAnswer
-            evaluateAnswer(selectedQuestion.question, answer);
-            fetchQuestions();
+            submitAnswer(currentQuestion.question, answer, currentScore);
         });
 
         function evaluateAnswer(question, answer) {
@@ -147,13 +145,8 @@
             })
             .then(response => response.json())
             .then(data => {
-                document.getElementById('evaluation').innerText = data.evaluation;
-                const selectedQuestion = questions.find(q => q.question === question);
-                const answerIndex = selectedQuestion.answers.findIndex(a => a.answer === answer);
-                if (answerIndex > -1) {
-                    selectedQuestion.answers[answerIndex].score = parseFloat(data.evaluation.split(':')[1]);
-                }
-                renderAnswers(selectedQuestion.answers);
+                document.getElementById('evaluation').innerHTML = `${data.evaluation} ${renderStars(data.score)}`;
+                currentScore = data.score;
             })
             .catch(error => {
                 console.error('Error:', error);
@@ -161,8 +154,33 @@
             });
         }
 
+        function submitAnswer(question, answer, score) {
+            fetch('http://127.0.0.1:5000/submit', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ question, answer, score }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    fetchQuestions(() => {
+                        // Select the updated question
+                        const updatedQuestion = questions.find(q => q.question === question);
+                        const questionCard = document.querySelector(`.question-card[data-id="${question}"]`);
+                        selectQuestion(updatedQuestion, questionCard);
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+        }
+
         fetchQuestions();
     </script>
 </body>
 <a href="https://www.flaticon.com/free-icons/star" title="star icons">Star icons created by Pixel perfect - Flaticon</a>
+<a href="https://www.flaticon.com/free-icons/half-star" title="half star icons">Half star icons created by Pixel perfect - Flaticon</a>
 </html>
